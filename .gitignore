@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Coverage
+coverage/
+
+# State file (generated at runtime)
+.vulnerability-spoiler-state.json
+
+# Note: dist/ is NOT ignored - it must be committed for the action to work
+
+# CLAUDE.md
+CLAUDE.md

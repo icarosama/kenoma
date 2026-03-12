@@ -1,0 +1,45 @@
+{
+  "name": "kenoma",
+  "version": "1.0.0",
+  "description": "Negative day vulnerability detection for open-source repositories using AI",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "ncc build src/index.ts -o dist --license licenses.txt",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/icarosama/kenoma.git"
+  },
+  "keywords": [
+    "github-action",
+    "security",
+    "vulnerability",
+    "claude",
+    "ai",
+    "monitoring"
+  ],
+  "author": "icarosama",
+  "contributors": [
+    {"name": "spaceraccoon", "url": "https://github.com/spaceraccoon"}
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/github": "^6.0.0",
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@octokit/rest": "^21.0.0",
+    "openai": "^6.24.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vercel/ncc": "^0.38.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  }
+}

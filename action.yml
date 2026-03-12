@@ -1,0 +1,94 @@
+name: 'Kenoma'
+description: 'Monitor repositories for security vulnerability patches using AI'
+author: 'icarosama'
+
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  api-key:
+    description: 'API key for the model provider (OpenAI, DeepSeek, etc.)'
+    required: false
+  anthropic-api-key:
+    description: 'Anthropic API key (deprecated: use api-key instead)'
+    required: false
+  provider:
+    description: 'Model provider: anthropic, openai, deepseek, or openai-compatible. Defaults to anthropic if omitted.'
+    required: false
+    default: anthropic
+  base-url:
+    description: 'Custom base URL for openai-compatible providers (e.g. http://localhost:11434/v1 for Ollama)'
+    required: false
+    default: ''
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+  repositories:
+    description: 'JSON array of repositories to monitor (e.g., [{"owner":"expressjs","repo":"express"}])'
+    required: true
+  state-file:
+    description: 'Path to state file for tracking last checked commits'
+    required: false
+    default: '.vulnerability-spoiler-state.json'
+  create-issues:
+    description: 'Whether to create GitHub issues for detected vulnerabilities'
+    required: false
+    default: 'true'
+  issue-repo:
+    description: 'Repository to create issues in (defaults to current repository)'
+    required: false
+    default: ''
+  model:
+    description: 'Model to use for analysis (e.g. claude-sonnet-4-6, gpt-4o, deepseek-chat). Must match your provider.'
+    required: false
+    default: 'claude-sonnet-4-6'
+  max-commits:
+    description: 'Maximum number of commits to analyze per repository per run'
+    required: false
+    default: '50'
+  enable-repo-context:
+    description: 'Fetch modified files for context (max 3 files, 3000 chars each)'
+    required: false
+    type: boolean
+    default: false
+  enable-judge:
+    description: 'Review detections with second model (only runs on positives)'
+    required: false
+    type: boolean
+    default: false
+  judge-model:
+    description: 'Model for judge (empty = same as primary model; uses the same provider)'
+    required: false
+    default: ''
+  max-concurrency:
+    description: 'Maximum number of commits to analyze in parallel per repository'
+    required: false
+    default: '3'
+  path-filter:
+    description: 'Comma-separated path prefixes; only analyze commits that touch at least one matching file (empty = analyze all)'
+    required: false
+    default: ''
+  skip-authors:
+    description: 'Comma-separated author name substrings to skip (e.g. "[bot],dependabot")'
+    required: false
+    default: ''
+  llm-timeout-seconds:
+    description: 'Seconds before an LLM API call is aborted and retried'
+    required: false
+    default: '60'
+
+outputs:
+  vulnerabilities-found:
+    description: 'Number of vulnerabilities detected'
+  issues-created:
+    description: 'Number of issues created'
+  analyzed-commits:
+    description: 'Total number of commits analyzed'
+  results:
+    description: 'JSON array of detected vulnerabilities with details'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
