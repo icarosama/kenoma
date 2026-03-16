@@ -32,3 +32,6 @@ coverage/
 
 # CLAUDE.md
 CLAUDE.md
+
+# Claude Code local session data
+.claude/

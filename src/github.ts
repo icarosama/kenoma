@@ -5,6 +5,7 @@ import type {
   CommitInfo,
   VulnerabilityAnalysis,
   PullRequestInfo,
+  VersionInfo,
 } from "./types.js";
 import { withRetry } from "./utils.js";
 
@@ -141,11 +142,92 @@ export async function checkExistingIssue(
   }
 }
 
+const SHODAN_PRODUCT_MAP: Record<string, string> = {
+  "nginx/nginx": "nginx",
+  "redis/redis": "Redis",
+  "haproxy/haproxy": "HAProxy",
+  "apache/tomcat": "Apache Tomcat",
+  "elastic/elasticsearch": "Elasticsearch",
+  "nodejs/node": "Node.js",
+  "hashicorp/vault": "Vault",
+  "keycloak/keycloak": "Keycloak",
+  "openssl/openssl": "OpenSSL",
+  "curl/curl": "curl",
+  "rabbitmq/rabbitmq-server": "RabbitMQ",
+  "istio/istio": "Istio",
+  "grpc/grpc-java": "gRPC",
+};
+
+function buildShodanQuery(repo: RepoConfig, version: string | null): string | null {
+  const product = SHODAN_PRODUCT_MAP[`${repo.owner}/${repo.repo}`];
+  if (!product) return null;
+  return version ? `product:"${product}" version:"${version}"` : `product:"${product}"`;
+}
+
+function buildCensysQuery(repo: RepoConfig, version: string | null): string | null {
+  const product = SHODAN_PRODUCT_MAP[`${repo.owner}/${repo.repo}`];
+  if (!product) return null;
+  return version
+    ? `services.software.product="${product}" AND services.software.version="${version}"`
+    : `services.software.product="${product}"`;
+}
+
+export async function getVersionInfo(
+  repo: RepoConfig,
+  fixCommitDate: string
+): Promise<VersionInfo> {
+  const fixDate = new Date(fixCommitDate);
+
+  let latestVulnerableVersion: string | null = null;
+  let fixedVersion: string | null = null;
+  let riskWindowDays: number | null = null;
+  let riskWindowStatus: "open" | "closed" = "open";
+
+  try {
+    const { data: releases } = await withRetry(() =>
+      octokit.repos.listReleases({
+        owner: repo.owner,
+        repo: repo.repo,
+        per_page: 30,
+      })
+    );
+
+    const sorted = releases
+      .filter((r) => r.published_at)
+      .sort((a, b) => new Date(a.published_at!).getTime() - new Date(b.published_at!).getTime());
+
+    for (const release of sorted) {
+      const releaseDate = new Date(release.published_at!);
+      if (releaseDate < fixDate) {
+        latestVulnerableVersion = release.tag_name;
+      } else if (fixedVersion === null) {
+        fixedVersion = release.tag_name;
+        riskWindowDays = Math.ceil(
+          (releaseDate.getTime() - fixDate.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        riskWindowStatus = "closed";
+      }
+    }
+  } catch {
+    // Non-fatal — version enrichment is best-effort
+  }
+
+  return {
+    latestVulnerableVersion,
+    fixedVersion,
+    riskWindowDays,
+    riskWindowStatus,
+    shodanQuery: buildShodanQuery(repo, latestVulnerableVersion),
+    censysQuery: buildCensysQuery(repo, latestVulnerableVersion),
+  };
+}
+
 export async function createVulnerabilityIssue(
   issueRepo: { owner: string; repo: string },
   repo: RepoConfig,
   commit: CommitInfo,
-  analysis: VulnerabilityAnalysis
+  analysis: VulnerabilityAnalysis,
+  versionInfo?: VersionInfo
 ): Promise<string> {
   const allowedSeverities = ["critical", "high", "medium", "low"];
   const rawSeverity = analysis.severity?.toLowerCase() || "unknown";
@@ -168,6 +250,41 @@ export async function createVulnerabilityIssue(
 ${commit.pullRequest.body ? `\n**Description:**\n${escapeMarkdown(commit.pullRequest.body.substring(0, 500))}${commit.pullRequest.body.length > 500 ? "..." : ""}` : ""}
 `
     : "";
+
+  let versionSection = "";
+  if (versionInfo) {
+    const vulnVersion = versionInfo.latestVulnerableVersion
+      ? `\`${versionInfo.latestVulnerableVersion}\``
+      : "Unknown (no releases found)";
+    const fixVersion = versionInfo.fixedVersion
+      ? `\`${versionInfo.fixedVersion}\``
+      : "⚠️ Not yet released — patch is public but no official release available";
+    const riskWindow =
+      versionInfo.riskWindowStatus === "closed" && versionInfo.riskWindowDays !== null
+        ? `${versionInfo.riskWindowDays} day(s) between fix commit and official release`
+        : "⚠️ Open — fix committed but no release published yet";
+
+    const searchSection =
+      versionInfo.shodanQuery || versionInfo.censysQuery
+        ? `
+### Exposure Search
+
+> Use these queries to find assets potentially running the vulnerable version.
+${versionInfo.shodanQuery ? `\n**Shodan:** \`${versionInfo.shodanQuery}\`` : ""}
+${versionInfo.censysQuery ? `\n**Censys:** \`${versionInfo.censysQuery}\`` : ""}
+`
+        : "";
+
+    versionSection = `
+### Version Information
+
+| Field | Value |
+|-------|-------|
+| **Last Vulnerable Version** | ${vulnVersion} |
+| **Fixed Version** | ${fixVersion} |
+| **Risk Window** | ${riskWindow} |
+${searchSection}`;
+  }
 
   const body = `## Potential Security Vulnerability Detected
 
@@ -194,7 +311,7 @@ ${safeAffectedCode ? `\`\`\`\n${safeAffectedCode}\n\`\`\`` : "Not specified"}
 
 ### Proof of Concept
 ${safePoC ? `\`\`\`\n${safePoC}\n\`\`\`` : "Not specified"}
-
+${versionSection}
 ---
 *This issue was automatically created by [Kenoma](https://github.com/icarosama/kenoma).*
 *Detected at: ${new Date().toISOString()}*

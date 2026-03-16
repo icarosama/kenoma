@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { CommitInfo, VulnerabilityAnalysis, RepoConfig } from "../types.js";
+import type { CommitInfo, VulnerabilityAnalysis, VersionInfo, RepoConfig } from "../types.js";
 
 const mockListCommits = vi.fn();
 const mockGetCommit = vi.fn();
 const mockListPRs = vi.fn();
 const mockCreateIssue = vi.fn();
 const mockGetContent = vi.fn();
+const mockListReleases = vi.fn();
 
 vi.mock("@octokit/rest", () => ({
   Octokit: class {
@@ -14,6 +15,7 @@ vi.mock("@octokit/rest", () => ({
       getCommit: mockGetCommit,
       listPullRequestsAssociatedWithCommit: mockListPRs,
       getContent: mockGetContent,
+      listReleases: mockListReleases,
     };
     issues = {
       create: mockCreateIssue,
@@ -31,6 +33,7 @@ import {
   getLatestCommitSha,
   getCommitsSince,
   createVulnerabilityIssue,
+  getVersionInfo,
   truncateDiff,
   getModifiedFilesContent,
 } from "../github.js";
@@ -190,6 +193,127 @@ describe("createVulnerabilityIssue", () => {
     expect(call.body).toContain("XSS");
     expect(call.body).toContain("abc123d");
     expect(call.body).toContain("<script>alert(1)</script>");
+  });
+
+  it("includes version enrichment section when versionInfo is provided", async () => {
+    mockCreateIssue.mockResolvedValueOnce({
+      data: { html_url: "https://github.com/testorg/testrepo/issues/2" },
+    });
+
+    const versionInfo: VersionInfo = {
+      latestVulnerableVersion: "v1.1.0",
+      fixedVersion: "v1.2.0",
+      riskWindowDays: 5,
+      riskWindowStatus: "closed",
+      shodanQuery: 'product:"nginx" version:"1.1.0"',
+      censysQuery: 'services.software.product="nginx" AND services.software.version="1.1.0"',
+    };
+
+    const issueRepo = { owner: "testorg", repo: "testrepo" };
+    await createVulnerabilityIssue(issueRepo, repo, commit, analysis, versionInfo);
+
+    const body = mockCreateIssue.mock.calls[0][0].body as string;
+    expect(body).toContain("Version Information");
+    expect(body).toContain("v1.1.0");
+    expect(body).toContain("v1.2.0");
+    expect(body).toContain("5 day(s)");
+    expect(body).toContain("Exposure Search");
+    expect(body).toContain('product:"nginx"');
+    expect(body).toContain('services.software.product="nginx"');
+  });
+
+  it("shows open risk window warning when fix is not yet released", async () => {
+    mockCreateIssue.mockResolvedValueOnce({
+      data: { html_url: "https://github.com/testorg/testrepo/issues/3" },
+    });
+
+    const versionInfo: VersionInfo = {
+      latestVulnerableVersion: "v1.1.0",
+      fixedVersion: null,
+      riskWindowDays: null,
+      riskWindowStatus: "open",
+      shodanQuery: null,
+      censysQuery: null,
+    };
+
+    const issueRepo = { owner: "testorg", repo: "testrepo" };
+    await createVulnerabilityIssue(issueRepo, repo, commit, analysis, versionInfo);
+
+    const body = mockCreateIssue.mock.calls[0][0].body as string;
+    expect(body).toContain("Not yet released");
+    expect(body).toContain("Open —");
+  });
+});
+
+describe("getVersionInfo", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    initOctokit("test-token");
+  });
+
+  it("identifies last vulnerable version and fixed version", async () => {
+    mockListReleases.mockResolvedValueOnce({
+      data: [
+        { tag_name: "v1.0.0", published_at: "2025-01-01T00:00:00Z" },
+        { tag_name: "v1.1.0", published_at: "2025-01-10T00:00:00Z" },
+        { tag_name: "v1.2.0", published_at: "2025-01-20T00:00:00Z" },
+      ],
+    });
+
+    // Fix committed on Jan 15 — v1.1.0 is last vulnerable, v1.2.0 is fixed
+    const info = await getVersionInfo(repo, "2025-01-15T12:00:00Z");
+
+    expect(info.latestVulnerableVersion).toBe("v1.1.0");
+    expect(info.fixedVersion).toBe("v1.2.0");
+    expect(info.riskWindowStatus).toBe("closed");
+    expect(info.riskWindowDays).toBe(5);
+  });
+
+  it("returns open risk window when no release exists after fix", async () => {
+    mockListReleases.mockResolvedValueOnce({
+      data: [
+        { tag_name: "v1.0.0", published_at: "2025-01-01T00:00:00Z" },
+        { tag_name: "v1.1.0", published_at: "2025-01-10T00:00:00Z" },
+      ],
+    });
+
+    const info = await getVersionInfo(repo, "2025-01-15T12:00:00Z");
+
+    expect(info.latestVulnerableVersion).toBe("v1.1.0");
+    expect(info.fixedVersion).toBeNull();
+    expect(info.riskWindowStatus).toBe("open");
+    expect(info.riskWindowDays).toBeNull();
+  });
+
+  it("builds Shodan and Censys queries for known repos", async () => {
+    mockListReleases.mockResolvedValueOnce({
+      data: [{ tag_name: "1.26.3", published_at: "2025-01-01T00:00:00Z" }],
+    });
+
+    const nginxRepo: RepoConfig = { owner: "nginx", repo: "nginx" };
+    const info = await getVersionInfo(nginxRepo, "2025-01-15T12:00:00Z");
+
+    expect(info.shodanQuery).toBe('product:"nginx" version:"1.26.3"');
+    expect(info.censysQuery).toBe('services.software.product="nginx" AND services.software.version="1.26.3"');
+  });
+
+  it("returns null queries for repos not in the product map", async () => {
+    mockListReleases.mockResolvedValueOnce({ data: [] });
+
+    const info = await getVersionInfo(repo, "2025-01-15T12:00:00Z");
+
+    expect(info.shodanQuery).toBeNull();
+    expect(info.censysQuery).toBeNull();
+  });
+
+  it("returns empty version info gracefully when releases API fails", async () => {
+    mockListReleases.mockRejectedValueOnce(new Error("API error"));
+
+    const info = await getVersionInfo(repo, "2025-01-15T12:00:00Z");
+
+    expect(info.latestVulnerableVersion).toBeNull();
+    expect(info.fixedVersion).toBeNull();
+    expect(info.riskWindowStatus).toBe("open");
   });
 });
 

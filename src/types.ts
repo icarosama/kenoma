@@ -66,6 +66,15 @@ export const JudgeAnalysisSchema = z.object({
 });
 export type JudgeAnalysis = z.infer<typeof JudgeAnalysisSchema>;
 
+export interface VersionInfo {
+  latestVulnerableVersion: string | null;
+  fixedVersion: string | null;
+  riskWindowDays: number | null;
+  riskWindowStatus: "open" | "closed";
+  shodanQuery: string | null;
+  censysQuery: string | null;
+}
+
 export interface DetectedVulnerability {
   repo: RepoConfig;
   commit: CommitInfo;

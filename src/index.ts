@@ -17,6 +17,7 @@ import {
   getModifiedFilesContent,
   checkExistingIssue,
   extractModifiedPaths,
+  getVersionInfo,
 } from "./github.js";
 import { initAnalyzer, analyzeCommit, judgeAnalysis } from "./analyzer.js";
 import type { ProviderType } from "./providers.js";
@@ -338,11 +339,19 @@ async function run(): Promise<void> {
               if (isDuplicate) {
                 repoLog.info(`  Skipping duplicate issue for ${commit.sha.substring(0, 7)}`);
               } else {
+                let versionInfo: import("./types.js").VersionInfo | undefined;
+                try {
+                  versionInfo = await getVersionInfo(repo, commit.date);
+                } catch (error) {
+                  repoLog.warning(`  Failed to fetch version info: ${error}`);
+                }
+
                 const issueUrl = await createVulnerabilityIssue(
                   inputs.issueRepo,
                   repo,
                   commit,
-                  analysis
+                  analysis,
+                  versionInfo
                 );
                 vulnerability.issueUrl = issueUrl;
                 outputs.issuesCreated++;
